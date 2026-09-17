@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hyperscaler Radar — Mor Michaeli</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#ffffff;
+    --text:#11162a;
+    --muted:#5a6376;
+    --faint:#8991a3;
+    --border:#e6e8ee;
+    --sidebar:#f6f7f9;
+    --green-bg:#e0f2e1;
+    --green-text:#1f6b39;
+    --blue:#2f56d9;
+    --quote-bg:#eef1ff;
+    --quote-border:#2f56d9;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#0f1220;
+      --text:#eef0f6;
+      --muted:#a7aec2;
+      --faint:#767f97;
+      --border:#262b40;
+      --sidebar:#171b2c;
+      --green-bg:#173a24;
+      --green-text:#7fdc9c;
+      --blue:#7d9bff;
+      --quote-bg:#161a30;
+      --quote-border:#7d9bff;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0f1220;
+    --text:#eef0f6;
+    --muted:#a7aec2;
+    --faint:#767f97;
+    --border:#262b40;
+    --sidebar:#171b2c;
+    --green-bg:#173a24;
+    --green-text:#7fdc9c;
+    --blue:#7d9bff;
+    --quote-bg:#161a30;
+    --quote-border:#7d9bff;
+  }
+
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; }
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    line-height:1.55;
+  }
+  .wrap{
+    max-width:920px;
+    margin:0 auto;
+    padding:56px 24px 96px;
+  }
+  code, .mono{
+    font-family:'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  /* byline row */
+  .byline{
+    display:flex;
+    justify-content:space-between;
+    align-items:baseline;
+    flex-wrap:wrap;
+    gap:10px 24px;
+    padding-bottom:22px;
+    border-bottom:1px solid var(--border);
+    margin-bottom:36px;
+  }
+  .byline .name{
+    font-weight:700;
+    font-size:16px;
+  }
+  .byline .name span{
+    font-weight:400;
+    color:var(--muted);
+  }
+  .byline nav{
+    display:flex;
+    gap:20px;
+    flex-wrap:wrap;
+  }
+  .byline nav a{
+    color:var(--blue);
+    text-decoration:none;
+    font-size:14.5px;
+  }
+  .byline nav a:hover{ text-decoration:underline; }
+
+  /* eyebrow */
+  .eyebrow{
+    font-size:13px;
+    font-weight:600;
+    letter-spacing:.04em;
+    text-transform:uppercase;
+    color:var(--muted);
+    margin-bottom:18px;
+  }
+  .eyebrow .hl{
+    background:var(--green-bg);
+    color:var(--green-text);
+    padding:2px 6px;
+    border-radius:3px;
+  }
+
+  h1{
+    font-size:56px;
+    line-height:1.05;
+    letter-spacing:-0.015em;
+    margin:0 0 22px;
+    font-weight:800;
+  }
+
+  .subtitle{
+    font-size:19px;
+    color:var(--muted);
+    max-width:74ch;
+    margin:0 0 40px;
+  }
+
+  /* stat strip */
+  .stats{
+    display:flex;
+    border-top:1px solid var(--border);
+    border-bottom:1px solid var(--border);
+    padding:26px 0;
+    margin-bottom:48px;
+    gap:0;
+  }
+  .stat{
+    flex:1;
+    padding:0 28px;
+    border-left:1px solid var(--border);
+  }
+  .stat:first-child{ border-left:none; padding-left:0; }
+  .stat .label{
+    font-weight:700;
+    font-size:15.5px;
+    margin-bottom:4px;
+  }
+  .stat .value{
+    color:var(--muted);
+    font-size:15px;
+  }
+
+  /* two-column layout */
+  .layout{
+    display:grid;
+    grid-template-columns:1fr 300px;
+    gap:56px;
+    align-items:start;
+  }
+  @media (max-width:720px){
+    .layout{ grid-template-columns:1fr; }
+    h1{ font-size:38px; }
+    .stats{ flex-direction:column; }
+    .stat{ border-left:none; border-top:1px solid var(--border); padding:16px 0 0; }
+    .stat:first-child{ border-top:none; padding-top:0; }
+  }
+
+  article p{
+    font-size:16.5px;
+    margin:0 0 20px;
+  }
+  article h2{
+    font-size:22px;
+    margin:40px 0 16px;
+    font-weight:700;
+  }
+
+  blockquote{
+    margin:32px 0;
+    padding:20px 24px;
+    background:var(--quote-bg);
+    border-left:4px solid var(--quote-border);
+    border-radius:0 8px 8px 0;
+  }
+  blockquote p{
+    margin:0;
+    font-size:19px;
+    font-weight:600;
+    line-height:1.4;
+  }
+
+  .suite-list{
+    list-style:none;
+    margin:0;
+    padding:0;
+  }
+  .suite-list li{
+    padding:16px 0;
+    border-top:1px solid var(--border);
+  }
+  .suite-list li:last-child{ border-bottom:1px solid var(--border); }
+  .suite-name{
+    display:flex;
+    justify-content:space-between;
+    align-items:baseline;
+    gap:12px;
+    margin-bottom:4px;
+  }
+  .suite-name .pkg{
+    font-weight:600;
+    font-size:15.5px;
+  }
+  .suite-name .date{
+    font-size:13px;
+    color:var(--faint);
+    white-space:nowrap;
+  }
+  .suite-desc{
+    font-size:15px;
+    color:var(--muted);
+    margin:0;
+  }
+
+  .also-in-suite{
+    font-size:15px;
+    color:var(--muted);
+    margin-top:18px;
+  }
+  .also-in-suite strong{ color:var(--text); }
+
+  /* sidebar */
+  .sidebar-box{
+    background:var(--sidebar);
+    border:1px solid var(--border);
+    border-radius:10px;
+    padding:22px;
+  }
+  .sidebar-box h3{
+    font-size:13px;
+    text-transform:uppercase;
+    letter-spacing:.04em;
+    color:var(--muted);
+    margin:0 0 16px;
+  }
+  .field{
+    margin-bottom:14px;
+  }
+  .field:last-child{ margin-bottom:0; }
+  .field .k{
+    font-size:13px;
+    color:var(--muted);
+    margin-bottom:2px;
+  }
+  .field .v{
+    font-size:14.5px;
+    font-weight:500;
+  }
+  .field .v.mono{
+    font-weight:400;
+    font-size:14px;
+  }
+
+  .elsewhere{
+    margin-top:24px;
+    background:var(--sidebar);
+    border:1px solid var(--border);
+    border-radius:10px;
+    padding:22px;
+  }
+  .elsewhere h3{
+    font-size:13px;
+    text-transform:uppercase;
+    letter-spacing:.04em;
+    color:var(--muted);
+    margin:0 0 14px;
+  }
+  .elsewhere ul{
+    list-style:none;
+    margin:0;
+    padding:0;
+    display:flex;
+    flex-direction:column;
+    gap:10px;
+  }
+  .elsewhere a{
+    color:var(--blue);
+    text-decoration:none;
+    font-size:14.5px;
+  }
+  .elsewhere a:hover{ text-decoration:underline; }
+
+  footer{
+    margin-top:64px;
+    padding-top:24px;
+    border-top:1px solid var(--border);
+    color:var(--faint);
+    font-size:13.5px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="byline">
+    <div class="name">Mor Michaeli <span>— Solutions Architect, Pump.co</span></div>
+    <nav>
+      <a href="https://pypi.org/user/morsmi/" target="_blank" rel="noopener">PyPI</a>
+      <a href="https://github.com/gomorsmi" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+  </div>
+
+  <div class="eyebrow">FINOPS TOOLING &middot; <span class="hl">MULTI-CLOUD SCANNING</span> &middot; OPEN SOURCE</div>
+
+  <h1>Hyperscaler Radar</h1>
+
+  <p class="subtitle">
+    Eleven open-source CLIs, one per platform, that scan an account and turn it into an
+    inventory, a cost report, and a draw.io diagram — built and released solo under the
+    <code class="mono">morsmi</code> PyPI namespace.
+  </p>
+
+  <div class="stats">
+    <div class="stat">
+      <div class="label">Started with</div>
+      <div class="value mono">aws-radar</div>
+    </div>
+    <div class="stat">
+      <div class="label">Suite size</div>
+      <div class="value">11 packages, 6+ platforms</div>
+    </div>
+    <div class="stat">
+      <div class="label">Latest release</div>
+      <div class="value mono">aws-radar — Aug 28, 2026</div>
+    </div>
+  </div>
+
+  <div class="layout">
+    <article>
+      <p>
+        The suite began as a single <code class="mono">aws-radar</code> package and grew
+        iteratively — one platform, one billing quirk, one customer conversation at a time.
+        Today it covers AWS, GCP, Azure, and OCI inventory scanning, plus Datadog, OpenAI,
+        Amazon Bedrock, and CoreWeave, each shipped as its own focused CLI rather than one
+        do-everything tool.
+      </p>
+      <p>
+        The core pattern repeats across clouds: scan the account, export a CSV, generate a
+        draw.io architecture diagram, and surface cost-waste findings — the same inventory
+        and diagram pair that the <code class="mono">sa-review-report</code> skill consumes
+        for customer SA reviews at Pump.
+      </p>
+
+      <blockquote>
+        <p>The suite began as a single aws-radar package and grew iteratively.</p>
+      </blockquote>
+
+      <h2>The suite</h2>
+      <ul class="suite-list">
+        <li>
+          <div class="suite-name">
+            <span class="pkg">aws-radar</span>
+            <span class="date">Last released Aug 28, 2026</span>
+          </div>
+          <p class="suite-desc">AWS resource inventory scanner, Cost Explorer reporter, and draw.io architecture diagram generator.</p>
+        </li>
+        <li>
+          <div class="suite-name">
+            <span class="pkg">openai-radar</span>
+            <span class="date">Last released Aug 24, 2026</span>
+          </div>
+          <p class="suite-desc">OpenAI infrastructure FinOps SDK — scan, analyze, and export your OpenAI org resources.</p>
+        </li>
+        <li>
+          <div class="suite-name">
+            <span class="pkg">azure-radar</span>
+            <span class="date">Last released Aug 19, 2026</span>
+          </div>
+          <p class="suite-desc">CLI tool for Azure services inventory and diagramming.</p>
+        </li>
+        <li>
+          <div class="suite-name">
+            <span class="pkg">datadog-radar</span>
+            <span class="date">Last released Jul 29, 2026</span>
+          </div>
+          <p class="suite-desc">Observability FinOps scanner for Datadog — cost, usage, custom metric cardinality, and waste findings from one CLI command.</p>
+        </li>
+        <li>
+          <div class="suite-name">
+            <span class="pkg">gcp-billing-radar</span>
+            <span class="date">Last released Jul 10, 2026</span>
+          </div>
+          <p class="suite-desc">Scans GCP billing accounts and bulk re-links their projects to a new account atomically, with dry-run, verification, CSV results, and an auto-generated rollback plan.</p>
+        </li>
+        <li>
+          <div class="suite-name">
+            <span class="pkg">oci-radar</span>
+            <span class="date">Last released Jul 10, 2026</span>
+          </div>
+          <p class="suite-desc">CLI tool for OCI services inventory and diagramming.</p>
+        </li>
+        <li>
+          <div class="suite-name">
+            <span class="pkg">gcp-radar</span>
+            <span class="date">Last released Jun 24, 2026</span>
+          </div>
+          <p class="suite-desc">GCP resource inventory scanner and draw.io architecture diagram generator.</p>
+        </li>
+        <li>
+          <div class="suite-name">
+            <span class="pkg">aws-bedrock-radar</span>
+            <span class="date">Last released Jun 22, 2026</span>
+          </div>
+          <p class="suite-desc">Serverless radar for Amazon Bedrock — deploys a Lambda that logs prompt and latency data to S3, then analyzes it.</p>
+        </li>
+        <li>
+          <div class="suite-name">
+            <span class="pkg">aws-waste-radar</span>
+            <span class="date">Last released Jun 11, 2026</span>
+          </div>
+          <p class="suite-desc">Scans AWS accounts for storage and EC2 cost-waste findings, including snapshot cleanup candidates.</p>
+        </li>
+      </ul>
+
+    </article>
+
+    <aside>
+      <div class="sidebar-box">
+        <h3>Project</h3>
+        <div class="field">
+          <div class="k">Maintainer</div>
+          <div class="v">Mor Michaeli ("Go")</div>
+        </div>
+        <div class="field">
+          <div class="k">Role</div>
+          <div class="v">Solutions Architect, Pump.co</div>
+        </div>
+        <div class="field">
+          <div class="k">Repo</div>
+          <div class="v mono">gomorsmi/hyperscale-radars</div>
+        </div>
+        <div class="field">
+          <div class="k">PyPI namespace</div>
+          <div class="v mono">morsmi</div>
+        </div>
+        <div class="field">
+          <div class="k">Principle</div>
+          <div class="v">one focused CLI per platform, dry-run before every write</div>
+        </div>
+      </div>
+
+      <div class="elsewhere">
+        <h3>Elsewhere</h3>
+        <ul>
+          <li><a href="https://github.com/gomorsmi" target="_blank" rel="noopener">GitHub — gomorsmi</a></li>
+          <li><a href="https://pypi.org/user/morsmi/" target="_blank" rel="noopener">PyPI — morsmi</a></li>
+        </ul>
+      </div>
+    </aside>
+  </div>
+
+  <footer>
+    Built and maintained solo by Mor Michaeli. All packages published on PyPI under the <span class="mono">morsmi</span> handle.
+  </footer>
+
+</div>
+</body>
+</html>
