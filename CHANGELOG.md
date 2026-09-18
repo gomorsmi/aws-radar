@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.0] - 2026-09-18
+### Added
+- `--pump-token` / `--pump-url` — push the inventory CSV straight to Pump's onboarding ingest. After the scan, rows are serialized in memory and uploaded to a Pump-owned S3 bucket via a presigned PUT that Pump mints on demand (stdlib `urllib` only; no new dependency, no AWS SDK or Pump credentials on the client). Available on both `inventory` and `run`.
+### Fixed
+- `run` now forwards the new `--pump-token` / `--pump-url` flags to the inventory step (the one-shot command previously dropped any flag not explicitly threaded through it).
+
 ## [1.2.0] - 2026-06-30
 ### Added
 - `--tags` — fetch resource tags in bulk per region via the Resource Groups Tagging API and join them onto each resource by ARN, adding a serialized `Tags` column (`key=value;…`). S3 buckets (global) are fetched separately via `GetBucketTagging`.

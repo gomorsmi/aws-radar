@@ -791,6 +791,10 @@ def main():
     parser.add_argument("--include-aws-tags", action="store_true",
                         help="Include aws:-prefixed system tags (excluded by default)")
     parser.add_argument("--export",      metavar="FILE.csv", help="Export results to CSV")
+    parser.add_argument("--pump-token", default=None,
+                        help="Pump onboarding token; upload the inventory CSV to Pump")
+    parser.add_argument("--pump-url", default="https://api.pump.co",
+                        help="Pump API base URL (used with --pump-token)")
     args = parser.parse_args()
 
     try:
@@ -840,6 +844,18 @@ def main():
             base, ext = os.path.splitext(args.export)
             wide_path = f"{base}-wide{ext or '.csv'}"
             export_csv_wide(rows, wide_path)
+
+    if args.pump_token:
+        from aws_radar import upload
+        csv_text = upload.rows_to_csv_string(rows, extra_cols=extra_cols)
+        try:
+            run_id = upload.upload_inventory(
+                csv_text, pump_url=args.pump_url,
+                pump_token=args.pump_token, account_id=account_id)
+            print(f"\n\u2713 Uploaded inventory to Pump (run {run_id})")
+        except upload.UploadError as e:
+            print(f"\n\u2717 Pump upload failed: {e}")
+            sys.exit(1)
 
 
 if __name__ == "__main__":
