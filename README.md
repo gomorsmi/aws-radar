@@ -106,6 +106,17 @@ for profile in prod staging dev; do
 done
 ```
 
+## Pump onboarding upload
+
+Select customers can push their inventory straight to Pump instead of granting a cross-account role. Pump's app supplies a one-off command carrying a short-lived onboarding token:
+
+```bash
+aws-radar run --profile my-sso-profile --all-regions \
+  --pump-token onb_tok_xxx --pump-url https://api.pump.co
+```
+
+The tool scans read-only, then uploads the CSV to a Pump-owned S3 bucket over a presigned PUT that Pump mints on demand. The token authorizes the upload; your AWS credentials only ever read your own account. Tags are omitted by default on this path — add `--tags` to include them.
+
 ## Python API
 
 ```python
