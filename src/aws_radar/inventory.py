@@ -18,10 +18,12 @@ Usage:
 import argparse
 import csv
 import sys
+import threading
 from datetime import datetime
 
 try:
     import boto3
+    from botocore.config import Config
     from botocore.exceptions import (
         ClientError, NoCredentialsError, EndpointConnectionError, BotoCoreError,
     )
@@ -327,18 +329,26 @@ def collect_alb(session, region, account_id):
 # AI / ML Service Collectors
 # ─────────────────────────────────────────────
 
+# Bedrock's control-plane list calls have been observed hanging well past the
+# 60s botocore default. Bound each request so an abandoned call (see
+# run_collector) actually dies instead of retrying in the background.
+BEDROCK_CONFIG = Config(connect_timeout=5, read_timeout=5,
+                        retries={"max_attempts": 2})
+
+
 def collect_bedrock(session, region, account_id):
     """Amazon Bedrock — foundation model access."""
     rows = []
     try:
-        br = session.client("bedrock", region_name=region)
+        br = session.client("bedrock", region_name=region, config=BEDROCK_CONFIG)
         # Custom model fine-tunes
         resp = safe_call(br.list_custom_models, default={})
         for m in resp.get("modelSummaries", []):
             rows.append(row(account_id, "Bedrock Model",
                 m["modelName"], m["modelArn"].split("/")[-1],
                 m.get("baseModelId", "-"), m.get("modelStatus", "active"),
-                region, f"Base: {m.get('baseModelId','-')}"))
+                region, f"Base: {m.get('baseModelId','-')}",
+                arn=m.get("modelArn")))
         # Provisioned throughput
         resp2 = safe_call(br.list_provisioned_model_throughputs, default={})
         for pt in resp2.get("provisionedModelSummaries", []):
@@ -346,14 +356,16 @@ def collect_bedrock(session, region, account_id):
                 pt["provisionedModelName"], pt["provisionedModelArn"].split("/")[-1],
                 f"{pt.get('desiredModelUnits','-')} units",
                 pt.get("status", "active"), region,
-                pt.get("foundationModelArn", "-").split("/")[-1]))
+                pt.get("foundationModelArn", "-").split("/")[-1],
+                arn=pt.get("provisionedModelArn")))
         # Inference profiles
         resp3 = safe_call(br.list_inference_profiles, default={})
         for ip in resp3.get("inferenceProfileSummaries", []):
             rows.append(row(account_id, "Bedrock Profile",
                 ip["inferenceProfileName"], ip["inferenceProfileId"],
                 ip.get("type", "-"), ip.get("status", "ACTIVE"),
-                region, ip.get("description", "-")[:40]))
+                region, ip.get("description", "-")[:40],
+                arn=ip.get("inferenceProfileArn")))
     except Exception:
         pass
     return rows
@@ -370,7 +382,8 @@ def collect_sagemaker(session, region, account_id):
         rows.append(row(account_id, "SageMaker Endpoint",
             ep["EndpointName"], ep["EndpointName"],
             "-", ep["EndpointStatus"], region,
-            f"Created: {ep['CreationTime'].strftime('%Y-%m-%d')}"))
+            f"Created: {ep['CreationTime'].strftime('%Y-%m-%d')}",
+            arn=ep.get("EndpointArn")))
 
     # Notebook instances
     resp2 = safe_call(sm.list_notebook_instances, default={})
@@ -378,7 +391,8 @@ def collect_sagemaker(session, region, account_id):
         rows.append(row(account_id, "SageMaker Notebook",
             nb["NotebookInstanceName"], nb["NotebookInstanceName"],
             nb.get("InstanceType", "-"), nb["NotebookInstanceStatus"],
-            region, nb.get("Url", "-")))
+            region, nb.get("Url", "-"),
+            arn=nb.get("NotebookInstanceArn")))
 
     # Training jobs (last 20 non-completed)
     resp3 = safe_call(sm.list_training_jobs,
@@ -387,7 +401,8 @@ def collect_sagemaker(session, region, account_id):
         rows.append(row(account_id, "SageMaker Training",
             tj["TrainingJobName"], tj["TrainingJobName"],
             "-", tj["TrainingJobStatus"], region,
-            f"Created: {tj['CreationTime'].strftime('%Y-%m-%d')}"))
+            f"Created: {tj['CreationTime'].strftime('%Y-%m-%d')}",
+            arn=tj.get("TrainingJobArn")))
 
     # Pipelines
     resp4 = safe_call(sm.list_pipelines, default={})
@@ -395,7 +410,8 @@ def collect_sagemaker(session, region, account_id):
         rows.append(row(account_id, "SageMaker Pipeline",
             pl["PipelineName"], pl["PipelineName"],
             "-", pl.get("PipelineStatus", "active"), region,
-            pl.get("PipelineDescription", "-")[:40]))
+            pl.get("PipelineDescription", "-")[:40],
+            arn=pl.get("PipelineArn")))
 
     # Feature groups
     resp5 = safe_call(sm.list_feature_groups, default={})
@@ -403,7 +419,8 @@ def collect_sagemaker(session, region, account_id):
         rows.append(row(account_id, "SageMaker FeatureGroup",
             fg["FeatureGroupName"], fg["FeatureGroupName"],
             "-", fg.get("FeatureGroupStatus", "active"), region,
-            f"Created: {fg['CreationTime'].strftime('%Y-%m-%d')}"))
+            f"Created: {fg['CreationTime'].strftime('%Y-%m-%d')}",
+            arn=fg.get("FeatureGroupArn")))
 
     return rows
 
@@ -416,14 +433,16 @@ def collect_rekognition(session, region, account_id):
     resp = safe_call(rek.list_collections, default={})
     for col_id in resp.get("CollectionIds", []):
         rows.append(row(account_id, "Rekognition Collection",
-            col_id, col_id, "-", "active", region, "-"))
+            col_id, col_id, "-", "active", region, "-",
+            arn=f"arn:aws:rekognition:{region}:{account_id}:collection/{col_id}"))
 
     resp2 = safe_call(rek.describe_projects, default={})
     for proj in resp2.get("ProjectDescriptions", []):
         name = proj["ProjectArn"].split("/")[-1]
         rows.append(row(account_id, "Rekognition Project",
             name, name, "-", proj.get("Status", "active"), region,
-            f"Created: {proj['CreationTimestamp'].strftime('%Y-%m-%d')}"))
+            f"Created: {proj['CreationTimestamp'].strftime('%Y-%m-%d')}",
+            arn=proj.get("ProjectArn")))
 
     return rows
 
@@ -438,7 +457,8 @@ def collect_textract(session, region, account_id):
             rows.append(row(account_id, "Textract Adapter",
                 adapter["AdapterName"], adapter["AdapterId"],
                 "-", "active", region,
-                f"Created: {adapter['CreationTime'].strftime('%Y-%m-%d')}"))
+                f"Created: {adapter['CreationTime'].strftime('%Y-%m-%d')}",
+                arn=f"arn:aws:textract:{region}:{account_id}:adapter/{adapter['AdapterId']}"))
     except Exception:
         pass
     return rows
@@ -454,14 +474,16 @@ def collect_comprehend(session, region, account_id):
         name = clf["DocumentClassifierArn"].split("/")[-1]
         rows.append(row(account_id, "Comprehend Classifier",
             name, name, "-", clf.get("Status", "active"), region,
-            clf.get("LanguageCode", "-")))
+            clf.get("LanguageCode", "-"),
+            arn=clf.get("DocumentClassifierArn")))
 
     resp2 = safe_call(comp.list_entity_recognizers, default={})
     for er in resp2.get("EntityRecognizerPropertiesList", []):
         name = er["EntityRecognizerArn"].split("/")[-1]
         rows.append(row(account_id, "Comprehend Recognizer",
             name, name, "-", er.get("Status", "active"), region,
-            er.get("LanguageCode", "-")))
+            er.get("LanguageCode", "-"),
+            arn=er.get("EntityRecognizerArn")))
 
     return rows
 
@@ -476,7 +498,8 @@ def collect_lex(session, region, account_id):
         rows.append(row(account_id, "Lex Bot",
             bot["botName"], bot["botId"],
             "-", bot.get("botStatus", "Available"), region,
-            f"Updated: {bot['lastUpdatedDateTime'].strftime('%Y-%m-%d')}"))
+            f"Updated: {bot['lastUpdatedDateTime'].strftime('%Y-%m-%d')}",
+            arn=f"arn:aws:lex:{region}:{account_id}:bot/{bot['botId']}"))
 
     return rows
 
@@ -491,7 +514,8 @@ def collect_kendra(session, region, account_id):
             rows.append(row(account_id, "Kendra Index",
                 idx["Name"], idx["Id"],
                 idx.get("Edition", "-"), idx.get("Status", "active"),
-                region, f"Updated: {idx['UpdatedAt'].strftime('%Y-%m-%d')}"))
+                region, f"Updated: {idx['UpdatedAt'].strftime('%Y-%m-%d')}",
+                arn=f"arn:aws:kendra:{region}:{account_id}:index/{idx['Id']}"))
     except Exception:
         pass
     return rows
@@ -507,14 +531,16 @@ def collect_transcribe(session, region, account_id):
         rows.append(row(account_id, "Transcribe Vocabulary",
             v["VocabularyName"], v["VocabularyName"],
             v.get("LanguageCode", "-"), v.get("VocabularyState", "active"),
-            region, f"Modified: {v['LastModifiedTime'].strftime('%Y-%m-%d')}"))
+            region, f"Modified: {v['LastModifiedTime'].strftime('%Y-%m-%d')}",
+            arn=f"arn:aws:transcribe:{region}:{account_id}:vocabulary/{v['VocabularyName']}"))
 
     resp2 = safe_call(trans.list_language_models, default={})
     for lm in resp2.get("Models", []):
         rows.append(row(account_id, "Transcribe Model",
             lm["ModelName"], lm["ModelName"],
             lm.get("LanguageCode", "-"), lm.get("ModelStatus", "active"),
-            region, "-"))
+            region, "-",
+            arn=f"arn:aws:transcribe:{region}:{account_id}:language-model/{lm['ModelName']}"))
 
     return rows
 
@@ -529,7 +555,8 @@ def collect_polly(session, region, account_id):
             rows.append(row(account_id, "Polly Lexicon",
                 lex["Name"], lex["Name"],
                 "-", "active", region,
-                f"Modified: {lex['Attributes']['LastModified'].strftime('%Y-%m-%d')}"))
+                f"Modified: {lex['Attributes']['LastModified'].strftime('%Y-%m-%d')}",
+                arn=lex.get("Attributes", {}).get("LexiconArn")))
     except Exception:
         pass
     return rows
@@ -545,7 +572,8 @@ def collect_translate(session, region, account_id):
             rows.append(row(account_id, "Translate Terminology",
                 t["Name"], t["Name"],
                 "-", "active", region,
-                f"Terms: {t.get('TermCount', '-')}"))
+                f"Terms: {t.get('TermCount', '-')}",
+                arn=t.get("Arn")))
     except Exception:
         pass
     return rows
@@ -561,7 +589,8 @@ def collect_forecast(session, region, account_id):
             rows.append(row(account_id, "Forecast Predictor",
                 p["PredictorName"], p["PredictorArn"].split("/")[-1],
                 "-", p.get("Status", "active"), region,
-                f"Created: {p['CreationTime'].strftime('%Y-%m-%d')}"))
+                f"Created: {p['CreationTime'].strftime('%Y-%m-%d')}",
+                arn=p.get("PredictorArn")))
     except Exception:
         pass
     return rows
@@ -577,7 +606,8 @@ def collect_personalize(session, region, account_id):
             rows.append(row(account_id, "Personalize Campaign",
                 c["name"], c["campaignArn"].split("/")[-1],
                 "-", c.get("status", "active"), region,
-                f"Updated: {c['lastUpdatedDateTime'].strftime('%Y-%m-%d')}"))
+                f"Updated: {c['lastUpdatedDateTime'].strftime('%Y-%m-%d')}",
+                arn=c.get("campaignArn")))
     except Exception:
         pass
     return rows
@@ -704,28 +734,123 @@ def get_all_regions(session):
     return [r["RegionName"] for r in resp["Regions"]]
 
 
+# Every partition botocore knows about. get_available_regions() defaults to
+# "aws" alone, which would make every service look absent to a GovCloud or
+# China caller and skip the entire scan.
+_PARTITIONS = ("aws", "aws-cn", "aws-us-gov",
+               "aws-iso", "aws-iso-b", "aws-iso-e", "aws-iso-f")
+
+_SERVICE_REGIONS = {}   # boto3 service id → set of regions with an endpoint
+
+
+def service_regions(session, service):
+    """Regions where *service* has an endpoint, unioned across all partitions."""
+    if service not in _SERVICE_REGIONS:
+        regs = set()
+        for part in _PARTITIONS:
+            try:
+                regs |= set(session.get_available_regions(service, partition_name=part))
+            except Exception:
+                pass
+        _SERVICE_REGIONS[service] = regs
+    return _SERVICE_REGIONS[service]
+
+
+def service_available(session, service, region):
+    """Whether it's worth calling *service* in *region*.
+
+    Calling a service in a region where it has no endpoint costs ~9s: the
+    hostname doesn't resolve and botocore retries before giving up. Across a
+    full --all-regions scan that is ~39 minutes of pure waiting, which is what
+    made AI/ML collection too expensive to enable by default.
+
+    Fails open — an empty region set (unknown or brand-new service, or endpoint
+    data older than the service) means "scan it anyway". A stale bundled
+    endpoint list can then only cost time, never hide a resource; safe_call's
+    EndpointConnectionError handling remains the backstop.
+    """
+    regs = service_regions(session, service)
+    return not regs or region in regs
+
+
+# Wall-clock budget per collector, keyed by boto3 service id. A service absent
+# from this map runs unbounded, which is the right default for collectors that
+# legitimately take a while on large accounts (paginating Lambda, DynamoDB, …).
+COLLECTOR_TIMEOUTS = {"bedrock": 10}
+
+
+def run_collector(fn, session, region, account_id, timeout=None):
+    """Run one collector. Returns ``(rows, note)``; *note* is None on success.
+
+    A collector must never take the run down with it, so both a hang and an
+    unexpected exception degrade to "no rows, carry on". When *timeout* is set
+    the work runs on a daemon thread and is abandoned once the budget is spent
+    — daemon so a stuck call can't block interpreter exit, and the per-client
+    botocore timeouts (see BEDROCK_CONFIG) keep the orphan short-lived.
+    """
+    if timeout is None:
+        try:
+            return fn(session, region, account_id), None
+        except Exception as e:
+            return [], f"error: {type(e).__name__} – skipped"
+
+    box = {}
+
+    def worker():
+        try:
+            box["rows"] = fn(session, region, account_id)
+        except Exception as e:
+            box["error"] = e
+
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+    t.join(timeout)
+
+    if t.is_alive():
+        return [], f"timed out after {timeout}s – skipped"
+    if "error" in box:
+        return [], f"error: {type(box['error']).__name__} – skipped"
+    return box.get("rows", []), None
+
+
+# (label, boto3 service id, collector) — the service id drives the endpoint
+# pre-check in run_inventory.
+CORE_COLLECTORS = [
+    ("EC2 instances",     "ec2",         collect_ec2),
+    ("RDS databases",     "rds",         collect_rds),
+    ("Lambda functions",  "lambda",      collect_lambda),
+    ("ECS clusters/svcs", "ecs",         collect_ecs),
+    ("EKS clusters",      "eks",         collect_eks),
+    ("ElastiCache",       "elasticache", collect_elasticache),
+    ("DynamoDB tables",   "dynamodb",    collect_dynamodb),
+    ("OpenSearch",        "opensearch",  collect_opensearch),
+    ("SQS queues",        "sqs",         collect_sqs),
+    ("SNS topics",        "sns",         collect_sns),
+    ("Load Balancers",    "elbv2",       collect_alb),
+]
+
 AI_COLLECTORS = [
-    ("Bedrock models/throughput",  collect_bedrock),
-    ("SageMaker",                  collect_sagemaker),
-    ("Rekognition",                collect_rekognition),
-    ("Textract adapters",          collect_textract),
-    ("Comprehend",                 collect_comprehend),
-    ("Lex bots",                   collect_lex),
-    ("Kendra indexes",             collect_kendra),
-    ("Transcribe",                 collect_transcribe),
-    ("Polly lexicons",             collect_polly),
-    ("Translate terminologies",    collect_translate),
-    ("Forecast predictors",        collect_forecast),
-    ("Personalize campaigns",      collect_personalize),
+    ("Bedrock models/throughput",  "bedrock",      collect_bedrock),
+    ("SageMaker",                  "sagemaker",    collect_sagemaker),
+    ("Rekognition",                "rekognition",  collect_rekognition),
+    ("Textract adapters",          "textract",     collect_textract),
+    ("Comprehend",                 "comprehend",   collect_comprehend),
+    ("Lex bots",                   "lexv2-models", collect_lex),
+    ("Kendra indexes",             "kendra",       collect_kendra),
+    ("Transcribe",                 "transcribe",   collect_transcribe),
+    ("Polly lexicons",             "polly",        collect_polly),
+    ("Translate terminologies",    "translate",    collect_translate),
+    ("Forecast predictors",        "forecast",     collect_forecast),
+    ("Personalize campaigns",      "personalize",  collect_personalize),
 ]
 
 
-def run_inventory(regions, session, account_id, include_ai=False,
+def run_inventory(regions, session, account_id, include_ai=True,
                   include_tags=False, want_cost_alloc=False, include_aws_tags=False):
     all_rows = []
     print(f"\nScanning {len(regions)} region(s): {', '.join(regions)}")
-    if include_ai:
-        print("  AI/ML services: ENABLED")
+    if not include_ai:
+        print("  AI/ML services: SKIPPED (--no-ai)")
     if include_tags:
         print("  Resource tags: ENABLED")
     print()
@@ -733,32 +858,19 @@ def run_inventory(regions, session, account_id, include_ai=False,
     print("Collecting S3 buckets …")
     all_rows += collect_s3(session, account_id)
 
+    collectors = CORE_COLLECTORS + (AI_COLLECTORS if include_ai else [])
+
     for region in regions:
         print(f"\n── Region: {region} ──")
-        collectors = [
-            ("EC2 instances",     lambda r: collect_ec2(session, r, account_id)),
-            ("RDS databases",     lambda r: collect_rds(session, r, account_id)),
-            ("Lambda functions",  lambda r: collect_lambda(session, r, account_id)),
-            ("ECS clusters/svcs", lambda r: collect_ecs(session, r, account_id)),
-            ("EKS clusters",      lambda r: collect_eks(session, r, account_id)),
-            ("ElastiCache",       lambda r: collect_elasticache(session, r, account_id)),
-            ("DynamoDB tables",   lambda r: collect_dynamodb(session, r, account_id)),
-            ("OpenSearch",        lambda r: collect_opensearch(session, r, account_id)),
-            ("SQS queues",        lambda r: collect_sqs(session, r, account_id)),
-            ("SNS topics",        lambda r: collect_sns(session, r, account_id)),
-            ("Load Balancers",    lambda r: collect_alb(session, r, account_id)),
-        ]
-
-        if include_ai:
-            collectors += [
-                (label, lambda r, fn=fn: fn(session, r, account_id))
-                for label, fn in AI_COLLECTORS
-            ]
-
-        for label, fn in collectors:
+        for label, service, fn in collectors:
             print(f"  Collecting {label} …", end=" ", flush=True)
-            results = fn(region)
-            print(f"{len(results)} found")
+            if not service_available(session, service, region):
+                print(f"skipped (no endpoint in {region})")
+                continue
+            results, note = run_collector(
+                fn, session, region, account_id,
+                timeout=COLLECTOR_TIMEOUTS.get(service))
+            print(note or f"{len(results)} found")
             all_rows += results
 
     if not any(r for r in all_rows if r.get("Region") != "global"):
@@ -780,8 +892,9 @@ def main():
     parser.add_argument("--region",      default=None,  help="AWS region (default: boto3 default)")
     parser.add_argument("--profile",     default=None,  help="AWS SSO/named profile")
     parser.add_argument("--all-regions", action="store_true", help="Scan all enabled regions")
-    parser.add_argument("--ai",          action="store_true",
-                        help="Also scan AI/ML services (Bedrock, SageMaker, Rekognition, Lex, Kendra, …)")
+    parser.add_argument("--ai", action=argparse.BooleanOptionalAction, default=True,
+                        help="Scan AI/ML services (Bedrock, SageMaker, Rekognition, Lex, "
+                             "Kendra, …). On by default; pass --no-ai to skip them")
     parser.add_argument("--tags",        action="store_true",
                         help="Fetch resource tags and add a 'Tags' column")
     parser.add_argument("--tags-wide",   action="store_true",
@@ -790,6 +903,16 @@ def main():
                         help="Add a 'CostAllocTags' column with each resource's billing-activated tags (implies --tags)")
     parser.add_argument("--include-aws-tags", action="store_true",
                         help="Include aws:-prefixed system tags (excluded by default)")
+    parser.add_argument("--billing",     action="store_true",
+                        help="Also pull Cost Explorer daily cost by service and write a CSV")
+    parser.add_argument("--billing-days", type=int, default=90,
+                        help="Billing window in days (default: 90)")
+    parser.add_argument("--billing-metric", default="UnblendedCost",
+                        help="Cost Explorer metric (default: UnblendedCost)")
+    parser.add_argument("--billing-output", metavar="FILE.csv", default="billing.csv",
+                        help="Billing CSV path (default: billing.csv)")
+    parser.add_argument("--include-zero", action="store_true",
+                        help="Keep zero-cost service/day buckets in the billing CSV")
     parser.add_argument("--export",      metavar="FILE.csv", help="Export results to CSV")
     args = parser.parse_args()
 
@@ -840,6 +963,14 @@ def main():
             base, ext = os.path.splitext(args.export)
             wide_path = f"{base}-wide{ext or '.csv'}"
             export_csv_wide(rows, wide_path)
+
+    if args.billing:
+        from aws_radar.billing import run_billing
+        run_billing(session, account_id,
+                    days=args.billing_days,
+                    metric=args.billing_metric,
+                    output=args.billing_output,
+                    include_zero=args.include_zero)
 
 
 if __name__ == "__main__":

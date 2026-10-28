@@ -4,15 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aws-radar"
-version = "1.2.0"
-description = "AWS resource inventory scanner and draw.io architecture diagram generator"
+version = "1.4.2"
+description = "AWS resource inventory scanner, Cost Explorer reporter, and draw.io architecture diagram generator"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.9"
 authors = [
-  { name = "Mor Michaeli", email = "you@example.com" }
+  { name = "Mor Michaeli", email = "97387545+gomorsmi@users.noreply.github.com" }
 ]
-keywords = ["aws", "cloud", "inventory", "architecture", "drawio", "diagrams"]
+keywords = ["aws", "cloud", "inventory", "architecture", "drawio", "diagrams", "cost-explorer", "billing", "finops"]
 classifiers = [
   "Development Status :: 5 - Production/Stable",
   "Intended Audience :: Developers",
@@ -41,9 +41,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage   = "https://github.com/yourname/aws-radar"
-Repository = "https://github.com/yourname/aws-radar"
-Issues     = "https://github.com/yourname/aws-radar/issues"
+Homepage   = "https://github.com/gomorsmi/aws-radar"
+Repository = "https://github.com/gomorsmi/aws-radar"
+Issues     = "https://github.com/gomorsmi/aws-radar/issues"
 
 [project.scripts]
 aws-radar = "aws_radar.__main__:main"

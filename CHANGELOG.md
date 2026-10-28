@@ -1,5 +1,35 @@
 # Changelog
 
+## [1.4.2] - 2026-10-28
+### Changed
+- Package metadata: the author email in `pyproject.toml` and the copyright holder in `LICENSE` now name Mor Michaeli instead of placeholders.
+
+## [1.4.1] - 2026-08-28
+### Fixed
+- A scan could hang indefinitely on `Collecting Bedrock models/throughput …`. Bedrock's control-plane list calls are now bounded by a 10-second wall-clock budget: if the budget is spent the collector is abandoned, the run prints `timed out after 10s – skipped`, and the scan continues with the next collector. The Bedrock client also gets explicit botocore connect/read timeouts (5s, 2 attempts) so the abandoned call dies promptly instead of retrying against the 60s default.
+- Collectors can no longer take the run down with them. An unexpected exception from any collector now degrades to zero rows plus a note, the same as a timeout.
+### Notes
+- Timeouts are opt-in per service via `COLLECTOR_TIMEOUTS`, and only Bedrock has one. Collectors that are legitimately slow on large accounts (paginating Lambda, DynamoDB, …) stay unbounded.
+
+## [1.4.0] - 2026-08-20
+### Changed
+- **AI/ML services are now scanned by default** on both `inventory` and `run`. Previously they required `--ai`. Pass the new `--no-ai` to skip them. `--ai` is still accepted and is now a no-op, so existing scripts keep working.
+- `run_inventory()` now defaults to `include_ai=True`, matching the CLI. Library callers relying on the old default should pass `include_ai=False`.
+- The startup banner no longer prints `AI/ML services: ENABLED` on every run; it prints `AI/ML services: SKIPPED (--no-ai)` when they are turned off.
+### Added
+- Collectors are skipped in regions where the service has no endpoint, reported as `Collecting Kendra indexes … skipped (no endpoint in eu-north-1)`. Calling a service in a region where it doesn't exist takes ~9s to fail (the hostname doesn't resolve and botocore retries); across a full `--all-regions` scan that was ~39 minutes of dead waiting, which is what made AI/ML too expensive to enable by default. The check reads botocore's bundled endpoint data, spans all partitions (so GovCloud and China regions resolve correctly), and fails open — a service unknown to your installed boto3 is scanned rather than silently dropped.
+- All 12 AI/ML collectors now record resource ARNs, so `--tags`, `--tags-wide`, and `--cost-allocation-tags` work for AI/ML resources instead of returning empty tags. 15 call sites pass through the ARN already in the API response; 6 that return no ARN (Rekognition collections, Textract adapters, Lex bots, Kendra indices, Transcribe vocabularies and language models) construct it from account, region, and name.
+- First test coverage for AI/ML scanning and the CLI flag plumbing, including round-trip tests that catch a `--no-ai` being silently dropped between the two argument parsers.
+
+## [1.3.0] - 2026-08-19
+### Added
+- `--billing` — pull Cost Explorer data for the trailing 90 days at daily granularity, grouped by AWS service, and write it to a CSV (`AccountID,Date,Service,Amount,Currency`). Available on the `inventory` and `run` sub-commands.
+- `aws-radar billing` — the same report as a standalone sub-command, for when you only want costs and not a resource scan.
+- `--billing-days` / `--days` to change the window, `--billing-metric` / `--metric` to pick the Cost Explorer metric (`UnblendedCost` by default; `AmortizedCost`, `BlendedCost`, `NetUnblendedCost`, `NetAmortizedCost`, and `UsageQuantity` also accepted), `--billing-output` / `--output` for the CSV path, and `--include-zero` to keep zero-cost buckets.
+- A summary table of the top 20 services by spend is printed alongside the CSV.
+### Fixed
+- `aws-radar diagram` crashed with `TypeError: SubElement() got multiple values for argument 'parent'` before writing any output. draw.io cells carry a `parent` attribute, which collided with `ElementTree.SubElement`'s own first parameter; attributes are now passed through the `attrib` dict.
+
 ## [1.2.0] - 2026-06-30
 ### Added
 - `--tags` — fetch resource tags in bulk per region via the Resource Groups Tagging API and join them onto each resource by ARN, adding a serialized `Tags` column (`key=value;…`). S3 buckets (global) are fetched separately via `GetBucketTagging`.

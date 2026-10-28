@@ -309,6 +309,16 @@ def build_color_map(rows, key):
 # XML builder
 # ─────────────────────────────────────────────
 
+def _cell(parent_elem, tag, **attrs):
+    """``ET.SubElement`` with attributes passed through the ``attrib`` dict.
+
+    draw.io cells carry a ``parent`` attribute naming their container, which
+    collides with ``SubElement``'s own first parameter when passed as a
+    keyword (``TypeError: got multiple values for argument 'parent'``).
+    """
+    return ET.SubElement(parent_elem, tag, {k: str(v) for k, v in attrs.items()})
+
+
 def build_drawio(rows, account_id="unknown", color_by_tag=None, tag_label=None):
     structure = build_structure(rows)
     color_map = build_color_map(rows, color_by_tag) if color_by_tag else {}
@@ -323,14 +333,14 @@ def build_drawio(rows, account_id="unknown", color_by_tag=None, tag_label=None):
         math="0", shadow="0")
     root = ET.SubElement(mxgraph, "root")
     ET.SubElement(root, "mxCell", id="0")
-    ET.SubElement(root, "mxCell", id="1", parent="0")
+    _cell(root, "mxCell", id="1", parent="0")
 
     cell_id = 2
     node_ids = {}   # (service_type) → list of cell ids (for drawing edges)
 
     # ── account container ──
     acct_id = str(cell_id); cell_id += 1
-    ET.SubElement(root, "mxCell",
+    _cell(root, "mxCell",
         id=acct_id, value=f"AWS Account: {account_id}",
         style="points=[[0,0],[0.25,0],[0.5,0],[0.75,0],[1,0],[1,0.25],[1,0.5],[1,0.75],[1,1],[0.75,1],[0.5,1],[0.25,1],[0,1],[0,0.75],[0,0.5],[0,0.25]];shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_account;strokeColor=#CD2264;fillColor=#F4B9DA;verticalLabelPosition=top;align=center;verticalAlign=bottom;spacingTop=25;fontStyle=1;fontSize=14;",
         vertex="1", parent="1"
@@ -349,7 +359,7 @@ def build_drawio(rows, account_id="unknown", color_by_tag=None, tag_label=None):
         reg_cell_id = str(cell_id); cell_id += 1
         reg_label = f"Region: {region}"
         reg_style = "points=[[0,0],[0.25,0],[0.5,0],[0.75,0],[1,0],[1,0.25],[1,0.5],[1,0.75],[1,1],[0.75,1],[0.5,1],[0.25,1],[0,1],[0,0.75],[0,0.5],[0,0.25]];shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_region;strokeColor=#147EBA;fillColor=#E6F2F8;verticalLabelPosition=top;align=center;verticalAlign=bottom;spacingTop=25;fontStyle=1;fontSize=12;"
-        reg_cell = ET.SubElement(root, "mxCell",
+        reg_cell = _cell(root, "mxCell",
             id=reg_cell_id, value=reg_label,
             style=reg_style, vertex="1", parent=acct_id)
 
@@ -370,7 +380,7 @@ def build_drawio(rows, account_id="unknown", color_by_tag=None, tag_label=None):
             # ── category swimlane ──
             cat_cell_id = str(cell_id); cell_id += 1
             cat_style = f"swimlane;startSize=30;fillColor={colors['fill']};strokeColor={colors['stroke']};rounded=1;arcSize=4;fontStyle=1;fontSize=11;"
-            cat_cell = ET.SubElement(root, "mxCell",
+            cat_cell = _cell(root, "mxCell",
                 id=cat_cell_id, value=cat,
                 style=cat_style, vertex="1", parent=reg_cell_id)
             geo = ET.SubElement(cat_cell, "mxGeometry",
@@ -410,10 +420,10 @@ def build_drawio(rows, account_id="unknown", color_by_tag=None, tag_label=None):
                     obj = ET.SubElement(root, "object",
                         {"id": node_cell_id, "label": display,
                          **_tag_attributes(tag_map)})
-                    node_cell = ET.SubElement(obj, "mxCell",
+                    node_cell = _cell(obj, "mxCell",
                         style=node_style, vertex="1", parent=cat_cell_id)
                 else:
-                    node_cell = ET.SubElement(root, "mxCell",
+                    node_cell = _cell(root, "mxCell",
                         id=node_cell_id, value=display,
                         style=node_style, vertex="1", parent=cat_cell_id)
                 geo2 = ET.SubElement(node_cell, "mxGeometry",
@@ -456,7 +466,7 @@ def build_drawio(rows, account_id="unknown", color_by_tag=None, tag_label=None):
             continue
         # connect first of each to avoid edge explosion
         edge_id = str(cell_id); cell_id += 1
-        edge_cell = ET.SubElement(root, "mxCell",
+        edge_cell = _cell(root, "mxCell",
             id=edge_id, value="",
             style=edge_style,
             edge="1", source=srcs[0], target=dsts[0], parent="1")
@@ -468,7 +478,7 @@ def build_drawio(rows, account_id="unknown", color_by_tag=None, tag_label=None):
         legend_x = 10 + (max_rx + PAD_X * 2) + 40
         legend_h = CAT_HEADER + len(entries) * 24 + 10
         legend_id = str(cell_id); cell_id += 1
-        legend = ET.SubElement(root, "mxCell", id=legend_id,
+        legend = _cell(root, "mxCell", id=legend_id,
             value=f"Legend — {color_by_tag}",
             style="swimlane;startSize=26;fillColor=#ffffff;strokeColor=#666666;rounded=1;fontStyle=1;fontSize=11;",
             vertex="1", parent="1")
@@ -477,7 +487,7 @@ def build_drawio(rows, account_id="unknown", color_by_tag=None, tag_label=None):
         lg.set("as", "geometry")
         for i, (val, color) in enumerate(entries):
             sw_id = str(cell_id); cell_id += 1
-            sw = ET.SubElement(root, "mxCell", id=sw_id, value=str(val),
+            sw = _cell(root, "mxCell", id=sw_id, value=str(val),
                 style=f"rounded=0;whiteSpace=wrap;html=1;fillColor={color};strokeColor=#666666;align=left;spacingLeft=6;fontSize=10;",
                 vertex="1", parent=legend_id)
             g = ET.SubElement(sw, "mxGeometry",
