@@ -8,7 +8,7 @@ version = "1.4.2"
 description = "AWS resource inventory scanner, Cost Explorer reporter, and draw.io architecture diagram generator"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 authors = [
   { name = "Mor Michaeli", email = "97387545+gomorsmi@users.noreply.github.com" }
 ]
@@ -19,7 +19,6 @@ classifiers = [
   "Intended Audience :: System Administrators",
   "Intended Audience :: Science/Research",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",

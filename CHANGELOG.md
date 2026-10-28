@@ -3,6 +3,9 @@
 ## [1.4.2] - 2026-10-28
 ### Changed
 - Package metadata: the author email in `pyproject.toml` and the copyright holder in `LICENSE` now name Mor Michaeli instead of placeholders.
+- **Python 3.10+ is now required.** Python 3.9 is end-of-life and no longer available on GitHub's Ubuntu runners, so it was dropped from `requires-python` and the CI matrix.
+### Fixed
+- CI now runs on `v*` tag pushes, so the PyPI publish job can actually trigger. Previously it was gated on a tag ref but the workflow only ran on branch pushes.
 
 ## [1.4.1] - 2026-08-28
 ### Fixed
