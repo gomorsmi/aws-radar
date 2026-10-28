@@ -27,6 +27,8 @@ def main():
     inv.add_argument("--cost-allocation-tags", action="store_true", help="Add a 'CostAllocTags' column with billing-activated tags (implies --tags)")
     inv.add_argument("--include-aws-tags", action="store_true", help="Include aws:-prefixed system tags (excluded by default)")
     inv.add_argument("--export",      metavar="FILE.csv", help="Export results to CSV")
+    inv.add_argument("--pump-token", default=None, help="Pump onboarding token; upload the CSV to Pump")
+    inv.add_argument("--pump-url", default="https://api.pump.co", help="Pump API base URL (used with --pump-token)")
 
     # ── diagram sub-command ──
     dia = sub.add_parser("diagram", help="Generate draw.io diagram from inventory CSV")
@@ -46,6 +48,8 @@ def main():
     run.add_argument("--include-aws-tags", action="store_true", help="Include aws:-prefixed system tags (excluded by default)")
     run.add_argument("--csv",    default="inventory.csv",      help="Intermediate CSV path")
     run.add_argument("--output", default="architecture.drawio", help="Output .drawio file")
+    run.add_argument("--pump-token", default=None, help="Pump onboarding token; upload the CSV to Pump")
+    run.add_argument("--pump-url", default="https://api.pump.co", help="Pump API base URL")
 
     args = parser.parse_args()
 
@@ -76,6 +80,8 @@ def main():
         if args.tags_wide:            inv_args += ["--tags-wide"]
         if args.cost_allocation_tags: inv_args += ["--cost-allocation-tags"]
         if args.include_aws_tags:     inv_args += ["--include-aws-tags"]
+        if args.pump_token: inv_args += ["--pump-token", args.pump_token]
+        if args.pump_url:   inv_args += ["--pump-url", args.pump_url]
         inv_args += ["--export", args.csv]
         sys.argv = inv_args
         inv_main()
