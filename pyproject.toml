@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 authors = [
   { name = "Mor Michaeli", email = "97387545+gomorsmi@users.noreply.github.com" }
 ]
-keywords = ["aws", "cloud", "inventory", "architecture", "drawio", "diagrams", "cost-explorer", "billing", "finops"]
+keywords = ["aws", "cloud", "inventory", "architecture", "drawio", "diagrams", "cost-explorer", "billing", "finops", "gpu"]
 classifiers = [
   "Development Status :: 5 - Production/Stable",
   "Intended Audience :: Developers",
@@ -31,6 +31,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+k8s = [
+  "kubernetes>=28.0",
+]
 dev = [
   "pytest>=7.0",
   "pytest-cov",

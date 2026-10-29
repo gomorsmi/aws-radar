@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+### Added
+- **`aws-radar gpu`**: GPU fleet report, ported from gcp-radar's GPU module. Shows GPU spend, % busy, idle GPU-hours and idle spend per GPU type, and recommends stopping idle instances, shrinking EKS node groups, downshifting pods to a cheaper GPU, or sharing barely-used GPUs. `--attention` also checks EKS inference pods for disabled FlashAttention (install with `aws-radar[k8s]`). Uses EC2, Cost Explorer and CloudWatch (CloudWatch agent NVIDIA metrics / Container Insights) read-only.
+### Differences from the GCP module
+- Instances with no GPU metrics are reported as unmeasured instead of 0% busy, so they are never recommended for stopping.
+- Node-group requested GPU-hours are now collected, so the shrink recommendation can fire.
+- A near-idle workload with no cheaper GPU to move to now gets the share-GPU recommendation instead of nothing.
+
 ## [1.5.0] - 2026-10-28
 ### Added
 - **`--forecasting`** on `inventory`, `run` and `billing`: prints "Projected monthly spend AWS · Forecast horizon: 6 months" from Cost Explorer's `GetCostForecast` and writes `forecast.csv` (one row per month with the projection, the 80% prediction interval and actual-to-date spend). `--forecast-months N` sets the horizon (1–18, default 6) and `--forecast-output` the CSV path. The current month combines month-to-date actuals with the forecast for its remaining days. Needs `ce:GetCostForecast`.

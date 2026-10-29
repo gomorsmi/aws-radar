@@ -6,6 +6,7 @@ Scans your AWS account(s) via SSO or IAM credentials and produces:
 - A CSV inventory of every running resource
 - A CSV of daily Cost Explorer spend by service (`--billing`)
 - A projected monthly spend forecast (`--forecasting`)
+- A GPU fleet report: utilisation, idle spend and savings recommendations (`aws-radar gpu`)
 - A `.drawio` file you can open in [diagrams.net](https://app.diagrams.net/) — with AWS icons, region containers, and service connections auto-wired
 
 ## Installation 
@@ -166,6 +167,50 @@ A forecast costs two Cost Explorer requests ($0.02), or one on the first of the
 month. Cost Explorer needs some cost history before it will forecast; a new
 account gets a warning and no rows.
 
+### GPU fleet
+
+`aws-radar gpu` reports how busy your GPU instances and EKS GPU node groups are,
+what the idle time costs, and where to save:
+
+```bash
+aws-radar gpu --region us-east-1
+aws-radar gpu --all-regions --days 14 --output gpu.json
+aws-radar gpu --price T4=0.53 --price L4=0.80      # $ per GPU-hour
+aws-radar gpu --attention --kube-context my-eks     # needs: pip install 'aws-radar[k8s]'
+```
+
+It prints:
+
+- **KPIs**: GPU spend, GPU count, % busy, idle GPU-hours and idle spend, and
+  the total of the recommended monthly savings.
+- **By GPU type**: allocated, requested and busy GPU-hours, cost per allocated
+  vs. busy GPU-hour, and the markup between them.
+- **Recommendations**: stop idle instances, shrink over-provisioned EKS node
+  groups, move low-utilisation pods to a cheaper GPU that fits their memory, or
+  share a barely-used GPU (time-slicing / MIG).
+- **Attention findings** (`--attention`): EKS inference pods whose engine has
+  FlashAttention switched off, or that run on GPUs without FA2 kernels.
+
+Where the numbers come from:
+
+| Data | Source |
+| --- | --- |
+| GPU instances, model, count, memory | `ec2:DescribeInstances`, `ec2:DescribeInstanceTypes`; EKS nodes are grouped by their `eks:nodegroup-name` / `karpenter.sh/nodepool` tag |
+| Cost | Cost Explorer EC2 compute `AmortizedCost` by instance type, split across instances by running hours |
+| Allocated GPU-hours | hours with CloudWatch `AWS/EC2 CPUUtilization` data × GPUs per instance |
+| Busy % | CloudWatch agent `nvidia_smi_utilization_gpu`, or Container Insights `node_gpu_utilization` |
+| EKS requests, pod busy %, GPU memory | Container Insights with enhanced observability (`node_gpu_usage_total`, `pod_gpu_*`) |
+
+GPU utilisation isn't a default EC2 metric. Without the CloudWatch agent's
+NVIDIA metrics or Container Insights, an instance's utilisation is unknown: it
+is counted in the `unmeasured` KPI and gets no stop or share recommendation,
+rather than being reported as idle.
+
+Downshift savings need a $/GPU-hour for both GPU types. The observed cost of
+the types you run is used automatically; use `--price` for types you don't run.
+Recommendations can overlap (for example a shrink and a downshift on the same
+node group), so treat the savings total as an upper bound.
+
 ### Tags
 
 `--tags` fetches tags in bulk per region via the Resource Groups Tagging API
@@ -241,6 +286,13 @@ For `--forecasting`:
 
 ```
 ce:GetCostAndUsage · ce:GetCostForecast
+```
+
+For `aws-radar gpu`:
+
+```
+ec2:DescribeInstances · ec2:DescribeInstanceTypes · ce:GetCostAndUsage
+cloudwatch:GetMetricData · cloudwatch:ListMetrics
 ```
 
 ## License

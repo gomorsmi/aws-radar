@@ -894,3 +894,331 @@ def test_export_csv(tmp_path):
     assert len(read_rows) == 2
     assert read_rows[0]["Service"] == "val_Service"
     assert set(reader.fieldnames) == set(COLS)
+
+
+# ── GPU fleet ──
+
+class _Pager:
+    def __init__(self, fn):
+        self.fn = fn
+
+    def paginate(self, **kwargs):
+        return [self.fn(**kwargs)]
+
+
+class _FakeGpuEC2:
+    """i-solo: standalone g5.xlarge; i-n1/i-n2: EKS node group of g6.12xlarge;
+    i-cpu: m5.large, which must be ignored."""
+
+    TYPES = {
+        "g5.xlarge":   {"Gpus": [{"Name": "A10G", "Count": 1, "MemoryInfo": {"SizeInMiB": 24576}}]},
+        "g6.12xlarge": {"Gpus": [{"Name": "L4", "Count": 4, "MemoryInfo": {"SizeInMiB": 23034}}]},
+        "p4de.24xlarge": {"Gpus": [{"Name": "A100", "Count": 8, "MemoryInfo": {"SizeInMiB": 81920}}]},
+    }
+
+    def __init__(self):
+        self.filters = None
+
+    def get_paginator(self, op):
+        return _Pager(getattr(self, "_" + op))
+
+    def _describe_instances(self, Filters):
+        self.filters = Filters
+        def inst(iid, itype, tags=()):
+            return {"InstanceId": iid, "InstanceType": itype,
+                    "Placement": {"AvailabilityZone": "us-east-1a"},
+                    "Tags": [{"Key": k, "Value": v} for k, v in tags]}
+        node = [("eks:cluster-name", "prod"), ("eks:nodegroup-name", "gpu-ng")]
+        return {"Reservations": [{"Instances": [
+            inst("i-solo", "g5.xlarge", [("Name", "train-box")]),
+            inst("i-n1", "g6.12xlarge", node),
+            inst("i-n2", "g6.12xlarge", node),
+            inst("i-cpu", "m5.large"),
+        ]}]}
+
+    def _describe_instance_types(self, InstanceTypes):
+        return {"InstanceTypes": [{"InstanceType": t, "GpuInfo": self.TYPES[t]}
+                                  if t in self.TYPES else {"InstanceType": t}
+                                  for t in InstanceTypes]}
+
+
+class _FakeCW:
+    """series: {(namespace, metric): [(dims dict, {stat: [values]})]}"""
+
+    def __init__(self, series):
+        self.series = series
+        self.queries = []
+
+    def get_paginator(self, op):
+        assert op == "list_metrics"
+        return _Pager(self._list_metrics)
+
+    def _list_metrics(self, Namespace, MetricName, Dimensions):
+        want = Dimensions[0]["Name"]
+        return {"Metrics": [
+            {"Namespace": Namespace, "MetricName": MetricName,
+             "Dimensions": [{"Name": k, "Value": v} for k, v in dims.items()]}
+            for dims, _ in self.series.get((Namespace, MetricName), []) if want in dims]}
+
+    def get_metric_data(self, MetricDataQueries, StartTime, EndTime, NextToken=None):
+        out = []
+        for q in MetricDataQueries:
+            self.queries.append(q)
+            m, stat = q["MetricStat"]["Metric"], q["MetricStat"]["Stat"]
+            dims = {d["Name"]: d["Value"] for d in m["Dimensions"]}
+            vals = []
+            for sdims, by_stat in self.series.get((m["Namespace"], m["MetricName"]), []):
+                if sdims == dims:
+                    vals = by_stat.get(stat, [])
+            out.append({"Id": q["Id"], "Values": vals})
+        return {"MetricDataResults": out}
+
+
+def _uptime(iid, hours):
+    return ({"InstanceId": iid}, {"SampleCount": [12.0] * hours})
+
+
+def _gpu_resources():
+    from aws_radar.gpu import list_gpu_instances
+
+    class S:
+        def client(self, service, region_name=None):
+            assert service == "ec2"
+            return _FakeGpuEC2()
+    return list_gpu_instances(S(), "us-east-1")
+
+
+def test_gpu_model_tells_the_80gb_a100_apart():
+    from aws_radar.gpu import gpu_model
+    assert gpu_model("A100", 81920) == "A100-80"
+    assert gpu_model("A100", 40960) == "A100"
+    assert gpu_model("L4", 23034) == "L4"
+
+
+def test_list_gpu_instances_rolls_eks_nodes_into_their_node_group():
+    res = _gpu_resources()
+
+    assert set(res) == {"i-solo", "prod/gpu-ng|g6.12xlarge"}      # m5.large dropped
+    solo, pool = res["i-solo"], res["prod/gpu-ng|g6.12xlarge"]
+    assert (solo.kind, solo.name, solo.gpu_type, solo.gpus) == (
+        "instance", "train-box (i-solo)", "A10G", 1)
+    assert (pool.kind, pool.name, pool.gpu_type, pool.gpus, pool.nodes) == (
+        "nodepool", "prod/gpu-ng", "L4", 4, 2)
+    assert pool.instance_ids == ["i-n1", "i-n2"]
+
+
+def test_collect_utilization_measures_alloc_busy_and_requested_hours():
+    from datetime import datetime
+    from aws_radar.gpu import collect_utilization
+
+    res = _gpu_resources()
+    node = {"ClusterName": "prod", "NodeName": "n"}
+    cw = _FakeCW({
+        ("AWS/EC2", "CPUUtilization"): [_uptime("i-solo", 10), _uptime("i-n1", 10),
+                                        _uptime("i-n2", 10)],
+        # two GPU series (per-GPU index) on i-n1, none on i-solo
+        ("ContainerInsights", "node_gpu_utilization"): [
+            ({**node, "InstanceId": "i-n1"}, {"Average": [50.0] * 10}),
+            ({**node, "InstanceId": "i-n2"}, {"Average": [10.0] * 10}),
+        ],
+        ("ContainerInsights", "node_gpu_usage_total"): [
+            ({**node, "InstanceId": "i-n1"}, {"Average": [1.0] * 10}),
+            ({**node, "InstanceId": "i-n2"}, {"Average": [1.0] * 10}),
+        ],
+    })
+    collect_utilization(cw, res.values(), datetime(2026, 10, 1), datetime(2026, 10, 2))
+
+    solo, pool = res["i-solo"], res["prod/gpu-ng|g6.12xlarge"]
+    assert solo.alloc_hours == 10                 # 10 hours x 1 GPU
+    assert not solo.util_measured and solo.busy_hours == 0
+    assert pool.alloc_hours == 80                 # 2 nodes x 10 hours x 4 GPUs
+    assert pool.util_measured and pool.busy_pct == pytest.approx(30.0)
+    assert pool.requested_hours == 20             # 1 GPU held per node per hour
+
+
+def test_collect_eks_workloads_turns_minute_samples_into_gpu_hours():
+    from datetime import datetime
+    from aws_radar.gpu import collect_eks_workloads
+
+    dims = {"ClusterName": "prod", "Namespace": "ml", "PodName": "llm"}
+    cw = _FakeCW({
+        ("ContainerInsights", "pod_gpu_request"): [
+            (dims, {"Sum": [120.0] * 5, "Average": [1.0] * 5}),        # 2 pods x 60 samples/h
+            ({**dims, "FullPodName": "llm-abc"}, {"Sum": [999.0]}),     # per-pod series: skipped
+        ],
+        ("ContainerInsights", "pod_gpu_utilization"): [(dims, {"Average": [10.0] * 5})],
+        ("ContainerInsights", "pod_gpu_memory_used"): [(dims, {"Maximum": [6e9, 9e9]})],
+    })
+    w = collect_eks_workloads(cw, datetime(2026, 10, 1), datetime(2026, 10, 2))["prod/ml/llm"]
+
+    assert (w.name, w.location, w.gpus) == ("ml/llm", "prod", 1)
+    assert w.requested_hours == w.alloc_hours == 10      # 5 hours x 2 pods x 1 GPU
+    assert w.busy_pct == pytest.approx(10.0)
+    assert w.peak_mem_gb == pytest.approx(9.0)
+
+
+class _FakeGpuCE:
+    def __init__(self):
+        self.kwargs = None
+
+    def get_cost_and_usage(self, **kwargs):
+        self.kwargs = kwargs
+        return {"ResultsByTime": [{"Groups": [
+            {"Keys": ["g6.12xlarge"], "Metrics": {"AmortizedCost": {"Amount": "300"}}},
+            {"Keys": ["g5.xlarge"], "Metrics": {"AmortizedCost": {"Amount": "40"}}},
+        ]}]}
+
+
+def test_collect_costs_splits_type_cost_by_instance_hours():
+    from datetime import datetime
+    from aws_radar.gpu import collect_costs
+
+    res = _gpu_resources()
+    res["i-solo"].alloc_hours = 10
+    pool = res["prod/gpu-ng|g6.12xlarge"]
+    pool.alloc_hours = 80
+    # a second g6.12xlarge pool with a third of the instance-hours
+    from dataclasses import replace
+    other = replace(pool, name="other", nodes=1, instance_ids=["i-x"], alloc_hours=40)
+    ce = _FakeGpuCE()
+
+    class S:
+        def client(self, service, region_name=None):
+            assert (service, region_name) == ("ce", "us-east-1")
+            return ce
+    collect_costs(S(), [res["i-solo"], pool, other], ["us-east-1"],
+                  datetime(2026, 10, 1), datetime(2026, 10, 31))
+
+    filt = {f["Dimensions"]["Key"]: f["Dimensions"]["Values"] for f in ce.kwargs["Filter"]["And"]}
+    assert filt["INSTANCE_TYPE"] == ["g5.xlarge", "g6.12xlarge"]
+    assert filt["REGION"] == ["us-east-1"]
+    assert res["i-solo"].cost == 40
+    assert pool.cost == pytest.approx(200)        # 20 of 30 instance-hours
+    assert other.cost == pytest.approx(100)
+
+
+def test_recommend_never_stops_an_instance_without_gpu_metrics():
+    from aws_radar.gpu import GpuResource, recommend
+
+    blind = GpuResource("blind", "instance", "az", "A10G", 1, alloc_hours=100)
+    idle = GpuResource("idle", "instance", "az", "A10G", 1, alloc_hours=100,
+                       busy_hours=1, util_measured=True)
+    recs = recommend([blind, idle], [], {"A10G": 1.0})
+    assert [r["resource"] for r in recs] == ["idle"]
+    assert recs[0]["action"] == "Stop instance"
+    assert recs[0]["savings_mo"] == 730.0
+
+
+def test_recommend_shrinks_a_node_pool_and_downshifts_or_shares_workloads():
+    from aws_radar.gpu import GpuResource, recommend
+
+    # 4 nodes, 100 GPU-hours each, pods only ever hold 150 -> 2 nodes are enough
+    pool = GpuResource("ng", "nodepool", "az", "L4", 4, nodes=4, alloc_hours=400,
+                       requested_hours=150, util_measured=True, busy_hours=100)
+    small = GpuResource("ml/small", "workload", "prod", "A10G", 1, alloc_hours=10,
+                        busy_hours=2, util_measured=True, peak_mem_gb=5)
+    tiny = GpuResource("ml/tiny", "workload", "prod", "T4", 1, alloc_hours=10,
+                       busy_hours=0.5, util_measured=True, peak_mem_gb=2)
+    price = {"L4": 0.8, "A10G": 1.0, "T4": 0.5}
+    recs = {r["resource"]: r for r in recommend([pool], [small, tiny], price)}
+
+    assert recs["ng"]["change"] == "4 -> 2 nodes"
+    assert recs["ng"]["savings_mo"] == pytest.approx(2 * 4 * 0.8 * 730)
+    assert recs["ml/small"]["action"] == "Move to T4"          # cheapest that fits
+    assert recs["ml/small"]["savings_mo"] == pytest.approx(0.5 * 730)
+    assert recs["ml/tiny"]["action"] == "Share GPU"              # already cheapest
+
+
+class _C:
+    def __init__(self, image="", args=(), env=()):
+        self.image, self.args, self.command = image, list(args), []
+        self.env = [type("E", (), {"name": k, "value": v}) for k, v in env]
+
+
+def test_attention_flags_disabled_flash_and_skips_unknown_gpus():
+    from aws_radar.gpu import GpuResource, attention_findings
+
+    on_l4 = GpuResource("ml/llm", "workload", "prod", "L4", 1)
+    unknown = GpuResource("ml/other", "workload", "prod", "?", 1, alloc_hours=1,
+                          busy_hours=1)
+    specs = {
+        "ml/llm": [_C("vllm/vllm-openai", env=[("VLLM_ATTENTION_BACKEND", "XFORMERS")],
+                      args=["--max-model-len", "8192"])],
+        "ml/other": [_C("vllm/vllm-openai")],
+    }
+    findings = attention_findings([on_l4, unknown], specs)
+
+    assert [f["resource"] for f in findings] == ["ml/llm"]
+    assert findings[0]["finding"] == "FlashAttention disabled"
+    assert "128 MiB" in findings[0]["impact"]
+
+
+def test_parse_prices():
+    import argparse
+    from aws_radar.gpu import parse_prices
+
+    assert parse_prices(["L4=0.80", "T4=0.53"]) == {"L4": 0.8, "T4": 0.53}
+    assert parse_prices(None) == {}
+    for bad in (["L4"], ["L4=cheap"]):
+        with pytest.raises(argparse.ArgumentTypeError):
+            parse_prices(bad)
+
+
+def test_rebuild_argv_repeats_append_options():
+    import argparse
+    from aws_radar.__main__ import _rebuild_argv
+
+    args = argparse.Namespace(command="gpu", price=["L4=0.8", "T4=0.5"], days=7)
+    assert _rebuild_argv("gpu", args) == [
+        "aws-radar", "--price", "L4=0.8", "--price", "T4=0.5", "--days", "7"]
+
+
+def test_gpu_subcommand_round_trips_to_gpu_main(monkeypatch):
+    from aws_radar import gpu
+    from aws_radar.__main__ import main as cli_main
+
+    seen = {}
+
+    def fake_run(session, regions, days, price_overrides, kube_api):
+        seen.update(regions=regions, days=days, prices=price_overrides)
+        return {"kpis": {"gpus": 0}, "workloads": []}
+
+    monkeypatch.setattr(gpu, "boto3", _FakeBoto3)
+    monkeypatch.setattr(gpu, "run", fake_run)
+    monkeypatch.setattr(sys, "argv", ["aws-radar", "gpu", "--region", "us-west-2",
+                                      "--days", "7", "--price", "L4=0.8", "--price", "T4=0.5"])
+    cli_main()
+    assert seen == {"regions": ["us-west-2"], "days": 7,
+                    "prices": {"L4": 0.8, "T4": 0.5}}
+
+
+def test_gpu_run_end_to_end():
+    from datetime import datetime, timezone
+    from aws_radar.gpu import run
+
+    node = {"ClusterName": "prod", "NodeName": "n"}
+    cw = _FakeCW({
+        ("AWS/EC2", "CPUUtilization"): [_uptime("i-solo", 100), _uptime("i-n1", 100),
+                                        _uptime("i-n2", 100)],
+        ("CWAgent", "nvidia_smi_utilization_gpu"): [
+            ({"InstanceId": "i-solo", "index": "0", "name": "NVIDIA A10G"},
+             {"Average": [1.0] * 100})],
+        ("ContainerInsights", "node_gpu_utilization"): [
+            ({**node, "InstanceId": i}, {"Average": [60.0] * 100}) for i in ("i-n1", "i-n2")],
+    })
+    ce = _FakeGpuCE()
+
+    class S:
+        def client(self, service, region_name=None):
+            return {"ec2": _FakeGpuEC2(), "cloudwatch": cw, "ce": ce}[service]
+
+    report = run(S(), ["us-east-1"], days=30,
+                 now=datetime(2026, 10, 29, tzinfo=timezone.utc))
+    k = report["kpis"]
+    assert k["gpus"] == 9                          # 1 A10G + 2 nodes x 4 L4
+    assert k["gpu_spend"] == 340
+    assert k["unmeasured"] == 0
+    assert report["by_type"]["L4"]["busy_pct"] == pytest.approx(60)
+    assert [r["action"] for r in report["recommendations"]] == ["Stop instance"]
+    # A10G observed at $40 / 100 GPU-hours
+    assert report["recommendations"][0]["savings_mo"] == pytest.approx(0.4 * 730)

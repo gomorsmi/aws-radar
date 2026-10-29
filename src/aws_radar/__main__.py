@@ -59,6 +59,17 @@ def main():
     bil.add_argument("--forecast-months", type=int, metavar="N", default=6, choices=FORECAST_MONTHS, help="Forecast horizon in months, 1–18 (default: 6)")
     bil.add_argument("--forecast-output", metavar="FILE.csv", default="forecast.csv", help="Forecast CSV path (default: forecast.csv)")
 
+    # ── gpu sub-command ──
+    gpu = sub.add_parser("gpu", help="GPU fleet utilisation, idle spend and savings recommendations")
+    gpu.add_argument("--profile",     default=None, help="AWS SSO/named profile")
+    gpu.add_argument("--region",      default=None, help="AWS region (default: boto3 default)")
+    gpu.add_argument("--all-regions", action="store_true", help="Scan all enabled regions")
+    gpu.add_argument("--days",        type=int, default=30, help="Lookback window in days (default: 30)")
+    gpu.add_argument("--price",       action="append", metavar="GPU=USD", help="$ per GPU-hour for a GPU type, e.g. L4=0.80 (repeatable)")
+    gpu.add_argument("--attention",   action="store_true", help="Check EKS GPU pods for FlashAttention (needs aws-radar[k8s] and a kubeconfig)")
+    gpu.add_argument("--kube-context", default=None, help="kubeconfig context for --attention (default: current context)")
+    gpu.add_argument("--output",      metavar="FILE.json", default=None, help="Write the full report as JSON")
+
     # ── diagram sub-command ──
     dia = sub.add_parser("diagram", help="Generate draw.io diagram from inventory CSV")
     dia.add_argument("--input",  required=True,          help="CSV produced by 'inventory'")
@@ -98,6 +109,11 @@ def main():
         from aws_radar.billing import main as bil_main
         sys.argv = _rebuild_argv("billing", args)
         bil_main()
+
+    elif args.command == "gpu":
+        from aws_radar.gpu import main as gpu_main
+        sys.argv = _rebuild_argv("gpu", args)
+        gpu_main()
 
     elif args.command == "diagram":
         from aws_radar.drawio import main as dia_main
@@ -163,6 +179,9 @@ def _rebuild_argv(cmd, args):
                 argv.append(flag)
             elif k in negatable:
                 argv.append("--no-" + k.replace("_", "-"))
+        elif isinstance(v, list):           # action="append": repeat the flag
+            for item in v:
+                argv += [flag, str(item)]
         elif v is not None:
             argv += [flag, str(v)]
     return argv
