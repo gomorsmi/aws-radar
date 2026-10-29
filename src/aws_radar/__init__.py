@@ -6,5 +6,5 @@ Quick start:
     from aws_radar.drawio import build_drawio
 """
 
-__version__ = "1.5.0"
+__version__ = "1.6.0"
 __author__ = "Mor Michaeli"

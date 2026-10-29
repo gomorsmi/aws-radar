@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.6.0] - 2026-10-28
 ### Added
 - **`aws-radar gpu`**: GPU fleet report, ported from gcp-radar's GPU module. Shows GPU spend, % busy, idle GPU-hours and idle spend per GPU type, and recommends stopping idle instances, shrinking EKS node groups, downshifting pods to a cheaper GPU, or sharing barely-used GPUs. `--attention` also checks EKS inference pods for disabled FlashAttention (install with `aws-radar[k8s]`). Uses EC2, Cost Explorer and CloudWatch (CloudWatch agent NVIDIA metrics / Container Insights) read-only.
 ### Differences from the GCP module
