@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aws-radar"
-version = "1.4.2"
+version = "1.5.0"
 description = "AWS resource inventory scanner, Cost Explorer reporter, and draw.io architecture diagram generator"
 readme = "README.md"
 license = "MIT"

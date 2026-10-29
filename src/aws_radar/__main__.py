@@ -15,6 +15,9 @@ METRICS = [
     "NetUnblendedCost", "NetAmortizedCost", "UsageQuantity",
 ]
 
+# Mirrors 1..aws_radar.billing.MAX_FORECAST_MONTHS, for the same reason.
+FORECAST_MONTHS = range(1, 19)
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -40,6 +43,9 @@ def main():
     inv.add_argument("--billing-metric", default=None, choices=METRICS, help="Cost Explorer metric (default: UnblendedCost)")
     inv.add_argument("--billing-output", metavar="FILE.csv", default=None, help="Billing CSV path (default: billing.csv)")
     inv.add_argument("--include-zero", action="store_true", help="Keep zero-cost service/day buckets in the billing CSV")
+    inv.add_argument("--forecasting", action="store_true", help="Also forecast projected monthly spend with Cost Explorer")
+    inv.add_argument("--forecast-months", type=int, metavar="N", default=None, choices=FORECAST_MONTHS, help="Forecast horizon in months, 1–18 (default: 6)")
+    inv.add_argument("--forecast-output", metavar="FILE.csv", default=None, help="Forecast CSV path (default: forecast.csv)")
     inv.add_argument("--export",      metavar="FILE.csv", help="Export results to CSV")
 
     # ── billing sub-command ──
@@ -49,6 +55,9 @@ def main():
     bil.add_argument("--metric",  default="UnblendedCost", choices=METRICS, help="Cost Explorer metric (default: UnblendedCost)")
     bil.add_argument("--include-zero", action="store_true", help="Keep service/day buckets with zero cost")
     bil.add_argument("--output",  metavar="FILE.csv", default="billing.csv", help="CSV output path (default: billing.csv)")
+    bil.add_argument("--forecasting", action="store_true", help="Also forecast projected monthly spend")
+    bil.add_argument("--forecast-months", type=int, metavar="N", default=6, choices=FORECAST_MONTHS, help="Forecast horizon in months, 1–18 (default: 6)")
+    bil.add_argument("--forecast-output", metavar="FILE.csv", default="forecast.csv", help="Forecast CSV path (default: forecast.csv)")
 
     # ── diagram sub-command ──
     dia = sub.add_parser("diagram", help="Generate draw.io diagram from inventory CSV")
@@ -72,7 +81,10 @@ def main():
     run.add_argument("--billing-metric", default=None, choices=METRICS, help="Cost Explorer metric (default: UnblendedCost)")
     run.add_argument("--billing-output", metavar="FILE.csv", default=None, help="Billing CSV path (default: billing.csv)")
     run.add_argument("--include-zero", action="store_true", help="Keep zero-cost service/day buckets in the billing CSV")
-    run.add_argument("--csv",    default="inventory.csv",      help="Intermediate CSV path")
+    run.add_argument("--forecasting", action="store_true", help="Also forecast projected monthly spend with Cost Explorer")
+    run.add_argument("--forecast-months", type=int, metavar="N", default=None, choices=FORECAST_MONTHS, help="Forecast horizon in months, 1–18 (default: 6)")
+    run.add_argument("--forecast-output", metavar="FILE.csv", default=None, help="Forecast CSV path (default: forecast.csv)")
+    run.add_argument("--csv",   default="inventory.csv",      help="Intermediate CSV path")
     run.add_argument("--output", default="architecture.drawio", help="Output .drawio file")
 
     args = parser.parse_args()
@@ -116,6 +128,9 @@ def main():
         if args.billing_metric:             inv_args += ["--billing-metric", args.billing_metric]
         if args.billing_output:             inv_args += ["--billing-output", args.billing_output]
         if args.include_zero:               inv_args += ["--include-zero"]
+        if args.forecasting:                inv_args += ["--forecasting"]
+        if args.forecast_months is not None: inv_args += ["--forecast-months", str(args.forecast_months)]
+        if args.forecast_output:            inv_args += ["--forecast-output", args.forecast_output]
         inv_args += ["--export", args.csv]
         sys.argv = inv_args
         inv_main()

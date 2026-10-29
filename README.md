@@ -5,6 +5,7 @@
 Scans your AWS account(s) via SSO or IAM credentials and produces:
 - A CSV inventory of every running resource
 - A CSV of daily Cost Explorer spend by service (`--billing`)
+- A projected monthly spend forecast (`--forecasting`)
 - A `.drawio` file you can open in [diagrams.net](https://app.diagrams.net/) — with AWS icons, region containers, and service connections auto-wired
 
 ## Installation 
@@ -90,6 +91,9 @@ The `inventory` command accepts the following options:
 | `--billing-metric METRIC` | Cost Explorer metric (default: `UnblendedCost`) |
 | `--billing-output FILE.csv` | Billing CSV path (default: `billing.csv`) |
 | `--include-zero` | Keep zero-cost service/day buckets in the billing CSV |
+| `--forecasting` | Also forecast projected monthly spend with Cost Explorer |
+| `--forecast-months N` | Forecast horizon in months, 1–18 (default: 6) |
+| `--forecast-output FILE.csv` | Forecast CSV path (default: `forecast.csv`) |
 | `--export FILE.csv` | Export results to CSV |
 
 ### Billing
@@ -122,6 +126,45 @@ zero-cost days are dropped by default — pass `--include-zero` to keep them. No
 that Cost Explorer is a global service reachable only through `us-east-1` (the
 region flags don't apply to it), it charges **$0.01 per paginated API request**,
 and it must be enabled in the payer account before it returns data.
+
+### Forecasting
+
+`--forecasting` asks Cost Explorer for projected monthly spend over the next 6
+months (`--forecast-months N`, up to 18), prints it, and writes `forecast.csv`.
+It works with `inventory`, `run` and `billing`, and uses the same metric as
+`--billing-metric` / `--metric`:
+
+```bash
+aws-radar billing --forecasting
+aws-radar inventory --forecasting --forecast-months 12
+```
+
+```
+          Projected monthly spend AWS · Forecast horizon: 6 months
+╭──────────┬─────────────────┬─────────────────────┬───────────────────────────╮
+│ Month    │ Projected (USD) │           80% range │ Basis                     │
+├──────────┼─────────────────┼─────────────────────┼───────────────────────────┤
+│ Oct 2026 │        4,312.55 │ 4,250.10 – 4,380.02 │ actual to date + forecast │
+│ Nov 2026 │        4,501.20 │ 4,102.88 – 4,899.51 │ forecast                  │
+│ …        │                 │                     │                           │
+╰──────────┴─────────────────┴─────────────────────┴───────────────────────────╯
+```
+
+The horizon starts with the current month. Cost Explorer only forecasts from
+today onward, so the current month is month-to-date actual spend plus the
+forecast for its remaining days, which makes it comparable with the full months
+after it. The range is Cost Explorer's 80% prediction interval. The CSV has one
+row per month:
+
+```csv
+AccountID,Month,Projected,LowerBound,UpperBound,ActualToDate,Currency
+123456789012,2026-10,4312.55,4250.10,4380.02,3980.40,USD
+123456789012,2026-11,4501.20,4102.88,4899.51,0.00,USD
+```
+
+A forecast costs two Cost Explorer requests ($0.02), or one on the first of the
+month. Cost Explorer needs some cost history before it will forecast; a new
+account gets a warning and no rows.
 
 ### Tags
 
@@ -192,6 +235,12 @@ For `--billing` / `aws-radar billing`:
 
 ```
 ce:GetCostAndUsage
+```
+
+For `--forecasting`:
+
+```
+ce:GetCostAndUsage · ce:GetCostForecast
 ```
 
 ## License

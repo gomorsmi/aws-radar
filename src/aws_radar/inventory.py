@@ -913,6 +913,13 @@ def main():
                         help="Billing CSV path (default: billing.csv)")
     parser.add_argument("--include-zero", action="store_true",
                         help="Keep zero-cost service/day buckets in the billing CSV")
+    parser.add_argument("--forecasting", action="store_true",
+                        help="Also forecast projected monthly spend with Cost Explorer")
+    parser.add_argument("--forecast-months", type=int, metavar="N", default=6,
+                        choices=range(1, 19),
+                        help="Forecast horizon in months, 1–18 (default: 6)")
+    parser.add_argument("--forecast-output", metavar="FILE.csv", default="forecast.csv",
+                        help="Forecast CSV path (default: forecast.csv)")
     parser.add_argument("--export",      metavar="FILE.csv", help="Export results to CSV")
     args = parser.parse_args()
 
@@ -971,6 +978,13 @@ def main():
                     metric=args.billing_metric,
                     output=args.billing_output,
                     include_zero=args.include_zero)
+
+    if args.forecasting:
+        from aws_radar.billing import run_forecast
+        run_forecast(session, account_id,
+                     months=args.forecast_months,
+                     metric=args.billing_metric,
+                     output=args.forecast_output)
 
 
 if __name__ == "__main__":

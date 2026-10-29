@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.5.0] - 2026-10-28
+### Added
+- **`--forecasting`** on `inventory`, `run` and `billing`: prints "Projected monthly spend AWS · Forecast horizon: 6 months" from Cost Explorer's `GetCostForecast` and writes `forecast.csv` (one row per month with the projection, the 80% prediction interval and actual-to-date spend). `--forecast-months N` sets the horizon (1–18, default 6) and `--forecast-output` the CSV path. The current month combines month-to-date actuals with the forecast for its remaining days. Needs `ce:GetCostForecast`.
+
 ## [1.4.2] - 2026-10-28
 ### Changed
 - Package metadata: the author email in `pyproject.toml` and the copyright holder in `LICENSE` now name Mor Michaeli instead of placeholders.

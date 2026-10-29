@@ -673,6 +673,168 @@ def test_cli_metrics_match_billing_metrics():
     assert cli_metrics == billing_metrics
 
 
+# ── forecasting ──
+
+def test_forecast_window_spans_calendar_months_from_today():
+    from datetime import date
+    from aws_radar.billing import forecast_window
+
+    assert forecast_window(6, today=date(2026, 10, 28)) == (
+        "2026-10-01", "2026-10-28", "2027-04-01")    # Oct..Mar, end exclusive
+    assert forecast_window(1, today=date(2026, 12, 5)) == (
+        "2026-12-01", "2026-12-05", "2027-01-01")
+
+
+class _FakeForecastCE:
+    def __init__(self, actual="40", deny=None):
+        self.calls = []
+        self.actual = actual
+        self.deny = deny
+
+    def get_cost_and_usage(self, **kwargs):
+        self.calls.append(("usage", kwargs))
+        return {"ResultsByTime": [{
+            "Total": {"UnblendedCost": {"Amount": self.actual, "Unit": "USD"}}}]}
+
+    def get_cost_forecast(self, **kwargs):
+        from botocore.exceptions import ClientError
+        self.calls.append(("forecast", kwargs))
+        if self.deny:
+            raise ClientError({"Error": {"Code": self.deny, "Message": "x"}},
+                              "GetCostForecast")
+        return {
+            "Total": {"Amount": "260", "Unit": "USD"},
+            "ForecastResultsByTime": [
+                {"TimePeriod": {"Start": "2026-10-28", "End": "2026-11-01"},
+                 "MeanValue": "10", "PredictionIntervalLowerBound": "8",
+                 "PredictionIntervalUpperBound": "12"},
+                {"TimePeriod": {"Start": "2026-11-01", "End": "2026-12-01"},
+                 "MeanValue": "100", "PredictionIntervalLowerBound": "90",
+                 "PredictionIntervalUpperBound": "115"},
+            ],
+        }
+
+
+def test_fetch_monthly_forecast_adds_actuals_to_the_current_month():
+    from datetime import date
+    from aws_radar.billing import fetch_monthly_forecast
+
+    ce = _FakeForecastCE()
+    rows = fetch_monthly_forecast(_FakeSession(ce), "123456789012", months=2,
+                                  today=date(2026, 10, 28))
+
+    usage, forecast = ce.calls[0][1], ce.calls[1][1]
+    assert usage["TimePeriod"] == {"Start": "2026-10-01", "End": "2026-10-28"}
+    assert forecast["TimePeriod"] == {"Start": "2026-10-28", "End": "2026-12-01"}
+    assert forecast["Metric"] == "UNBLENDED_COST"
+    assert forecast["Granularity"] == "MONTHLY"
+
+    assert [r["Month"] for r in rows] == ["2026-10", "2026-11"]
+    # October: 40 already spent + 10 forecast for the remaining days.
+    assert (rows[0]["Projected"], rows[0]["LowerBound"], rows[0]["UpperBound"]) == (
+        "50.00", "48.00", "52.00")
+    assert rows[0]["ActualToDate"] == "40.00"
+    # November is pure forecast.
+    assert (rows[1]["Projected"], rows[1]["ActualToDate"]) == ("100.00", "0.00")
+
+
+def test_fetch_monthly_forecast_skips_actuals_on_the_first_of_the_month():
+    """Start == End is invalid for GetCostAndUsage, and there is nothing to sum."""
+    from datetime import date
+    from aws_radar.billing import fetch_monthly_forecast
+
+    ce = _FakeForecastCE()
+    fetch_monthly_forecast(_FakeSession(ce), "1", months=6, today=date(2026, 11, 1))
+    assert [kind for kind, _ in ce.calls] == ["forecast"]
+
+
+def test_fetch_monthly_forecast_returns_empty_on_error(capsys):
+    from datetime import date
+    from aws_radar.billing import fetch_monthly_forecast
+
+    ce = _FakeForecastCE(deny="AccessDeniedException")
+    assert fetch_monthly_forecast(_FakeSession(ce), "1", today=date(2026, 10, 28)) == []
+    assert "ce:GetCostForecast" in capsys.readouterr().out
+
+
+def test_every_billing_metric_has_a_forecast_metric():
+    from aws_radar.billing import METRICS, FORECAST_METRICS
+    assert set(FORECAST_METRICS) == set(METRICS)
+
+
+def test_cli_forecast_months_match_billing_limit():
+    from aws_radar.__main__ import FORECAST_MONTHS
+    from aws_radar.billing import MAX_FORECAST_MONTHS
+    assert FORECAST_MONTHS == range(1, MAX_FORECAST_MONTHS + 1)
+
+
+def test_forecast_title():
+    from aws_radar.billing import forecast_title
+    assert forecast_title(6) == "Projected monthly spend AWS · Forecast horizon: 6 months"
+    assert forecast_title(1) == "Projected monthly spend AWS · Forecast horizon: 1 month"
+
+
+def test_export_forecast_csv(tmp_path):
+    from aws_radar.billing import export_forecast_csv, FORECAST_COLS
+
+    rows = [{"AccountID": "1", "Month": "2026-11", "Projected": "100.00",
+             "LowerBound": "90.00", "UpperBound": "115.00",
+             "ActualToDate": "0.00", "Currency": "USD"}]
+    out = tmp_path / "forecast.csv"
+    export_forecast_csv(rows, str(out))
+
+    with open(out) as f:
+        reader = csv.DictReader(f)
+        read = list(reader)
+    assert reader.fieldnames == FORECAST_COLS
+    assert read[0]["Projected"] == "100.00"
+
+
+@pytest.mark.parametrize("argv, expected", [
+    (["aws-radar", "inventory"], None),
+    (["aws-radar", "inventory", "--forecasting"], (6, "forecast.csv")),
+    (["aws-radar", "inventory", "--forecasting", "--forecast-months", "12",
+      "--forecast-output", "f.csv"], (12, "f.csv")),
+])
+def test_forecasting_survives_the_two_parser_round_trip(
+        monkeypatch, captured_inventory, argv, expected):
+    from aws_radar import billing
+    from aws_radar.__main__ import main as cli_main
+
+    seen = []
+    monkeypatch.setattr(billing, "run_forecast",
+                        lambda s, a, months, metric, output: seen.append((months, output)))
+    monkeypatch.setattr(sys, "argv", argv)
+    cli_main()
+    assert seen == ([expected] if expected else [])
+
+
+def test_forecast_months_rejects_beyond_cost_explorer_limit(monkeypatch):
+    from aws_radar.__main__ import main as cli_main
+
+    monkeypatch.setattr(sys, "argv",
+                        ["aws-radar", "billing", "--forecasting", "--forecast-months", "19"])
+    with pytest.raises(SystemExit):
+        cli_main()
+
+
+def test_run_forwards_forecasting_to_the_inventory_step(monkeypatch):
+    from aws_radar import inventory, drawio
+    from aws_radar.__main__ import main as cli_main
+
+    captured = {}
+    monkeypatch.setattr(inventory, "main",
+                        lambda: captured.__setitem__("argv", list(sys.argv)))
+    monkeypatch.setattr(drawio, "main", lambda: None)
+    monkeypatch.setattr(sys, "argv",
+                        ["aws-radar", "run", "--forecasting", "--forecast-months", "3"])
+
+    cli_main()
+    argv = captured["argv"]
+    assert "--forecasting" in argv
+    assert argv[argv.index("--forecast-months") + 1] == "3"
+
+
 # ── drawio generation ──
 
 def test_build_drawio_returns_xml():
